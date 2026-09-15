@@ -1,0 +1,21 @@
+# Cloudflare Worker serving MarketfaunaBot's signed Web Bot Auth key directory.
+#
+# Deploy (needs a Cloudflare account; see the request sheet, item 10):
+#   npx wrangler login            (or CLOUDFLARE_API_TOKEN scoped to Workers Scripts: Edit)
+#   python -c "from cryptography.hazmat.primitives import serialization as s; import base64; \
+#     k=open(r'%USERPROFILE%\.marketfauna\wba-ed25519-private.pem','rb').read(); \
+#     p=s.load_pem_private_key(k,None); print(base64.b64encode(p.private_bytes(s.Encoding.DER, \
+#     s.PrivateFormat.PKCS8, s.NoEncryption())).decode())" | npx wrangler secret put WBA_PRIVATE_KEY_PKCS8_B64
+#   npx wrangler deploy
+# Then check: curl -sD - https://<worker>.workers.dev/.well-known/http-message-signatures-directory
+# and run tools/wba.py's verify_directory_response against it, or Cloudflare Research's debug page
+# at https://http-message-signatures-example.research.cloudflare.com/debug .
+
+name = "marketfauna-wba-directory"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+PURPOSE_URL = "https://marketfauna.com/bot.html"
+
+# Secret (never in this file): WBA_PRIVATE_KEY_PKCS8_B64

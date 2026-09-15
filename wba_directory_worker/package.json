@@ -1,0 +1,10 @@
+{
+  "name": "marketfauna-wba-directory",
+  "private": true,
+  "type": "module",
+  "description": "Signed Web Bot Auth key directory for MarketfaunaBot (Cloudflare Worker). Test locally with: node test-parity.mjs",
+  "scripts": {
+    "test": "node test-parity.mjs",
+    "deploy": "wrangler deploy"
+  }
+}

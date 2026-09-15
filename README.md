@@ -1,0 +1,75 @@
+# web-bot-auth-python
+
+Sign your bot's HTTP requests with [Web Bot Auth](https://datatracker.ietf.org/doc/draft-ietf-webbotauth-httpsig-protocol/) (RFC 9421 HTTP Message Signatures, Ed25519) from Python, serve the signed key directory Cloudflare requires from a free Worker, and verify both locally before you apply for verified-bot status.
+
+Written for a small research collector ([MarketfaunaBot](https://marketfauna.com/bot.html)) that needed an honest identity a bot manager can check. Single file, standard library plus `cryptography`, tests included.
+
+Status: implemented and tested against Cloudflare's published test directory; the author's own bot is not yet verified. Nothing here claims verified status for you.
+
+## What is in the box
+
+| File | What it does |
+|---|---|
+| `wba.py` | Ed25519 key handling, RFC 7638 thumbprint (the `keyid`), request signing over `@authority` and `signature-agent` with the `web-bot-auth` tag, signed key-directory responses over `"@authority";req` with the `http-message-signatures-directory` tag, and verification of both. |
+| `test_wba.py` | 14 tests. Includes a live signed directory response captured from Cloudflare Research's test deployment (signed with the RFC 9421 Appendix B.1.4 key): the verifier accepts it, computes the same `keyid` Cloudflare publishes, and rejects it for another host or after expiry. Also a local controlled endpoint: a directory server plus a verifying server; unsigned, expired, tampered and unknown-key requests all get 401. |
+| `wba_directory_worker/` | A Cloudflare Worker that serves `/.well-known/http-message-signatures-directory` with the signed response headers. The private key is a Worker secret; only `kty`, `crv` and `x` ever leave. |
+| `test_wba_worker.py` | Runs the Worker under Node's WebCrypto with a throwaway key and checks its output with the Python verifier. |
+
+## Why a directory, not a static file
+
+Cloudflare's [Web Bot Auth reference](https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/) requires the directory response itself to be signed (`Signature`, `Signature-Input`, `Content-Type: application/http-message-signatures-directory+json`), so that nobody can mirror your public keys and register as you. A static host such as GitHub Pages cannot add those headers. The Worker does, on the free plan, and needs no DNS change: the `Signature-Agent` header in your requests points at the Worker's origin.
+
+## Quick start
+
+```bash
+pip install cryptography
+python wba.py keygen ~/.mybot/wba-ed25519-private.pem     # prints the public JWK and keyid
+python test_wba.py
+```
+
+Sign a request:
+
+```python
+import wba, urllib.request
+
+priv = wba.load_private_key("~/.mybot/wba-ed25519-private.pem")
+kid = wba.thumbprint(wba.public_jwk(priv.public_key()))
+url = "https://api.example.com/search?q=agent"
+headers = {"User-Agent": "MyBot/1.0 (+https://example.com/bot.html)"}
+headers.update(wba.sign_request(priv, kid, "GET", url, "https://mybot-directory.example.workers.dev"))
+urllib.request.urlopen(urllib.request.Request(url, headers=headers))
+```
+
+Verify one (for your own endpoint or tests):
+
+```python
+keys, reasons = wba.verify_directory_response(authority, response_headers, response_body)
+ok, reason, kid = wba.verify_request("GET", url, request_headers, keys)
+```
+
+Deploy the directory (needs a Cloudflare account; free plan):
+
+```bash
+cd wba_directory_worker
+# convert the PEM to base64 DER and store it as the Worker secret; see wrangler.toml for the one-liner
+npx wrangler secret put WBA_PRIVATE_KEY_PKCS8_B64
+npx wrangler deploy
+curl -sD - https://<your-worker>.workers.dev/.well-known/http-message-signatures-directory
+```
+
+Then apply: Cloudflare dashboard, Manage Account, Configurations, Bot Submission Form, Verification Method "Request Signature", Validation Instructions = your directory URL. Cloudflare's sequence is: directory first, application, then sign production requests after approval.
+
+## Design notes
+
+- `Signature-Agent` must be covered by the signature; a valid signature that omits it is rejected, because otherwise the identity could be swapped without re-signing.
+- Directory responses carry `Cache-Control: no-store`. A signature that expires in 300 seconds must not be cached for a day; Cloudflare's illustrative example shows `max-age=86400`, which is an interoperability risk with clients that cache and verify later.
+- No nonce database: Cloudflare does not validate nonces; short `expires` is the replay protection.
+- Requests cover `@authority` and `signature-agent` only. Add `@method` and `@path` if your receiver wants them; do not cover `Content-Digest` through a proxy that may re-encode the body.
+
+## Honest limits
+
+The author's bot is not yet on Cloudflare's verified list, so this kit has not been proven end to end against Cloudflare's verifier; it has been proven against Cloudflare's published test directory and against itself. Whether a low-volume bot is accepted is Cloudflare's decision. If you get further than the author, an issue here with what the form asked and what happened would help the next operator.
+
+## Licence
+
+MIT. Contact: hello@marketfauna.com.
